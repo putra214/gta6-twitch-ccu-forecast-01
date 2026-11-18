@@ -188,23 +188,40 @@ def hour_quantiles(p1, centres, sigmas, h):
             for z in Z]
 
 
+def _viewers(row):
+    """Numeric viewers value of a row, or None when it carries none.
+
+    A case always carries valid rows, but one malformed row must not crash
+    the whole forecast (an unranked entry scores nothing): callers fall
+    back to the next source instead.
+    """
+    try:
+        value = row["viewers"]
+    except (KeyError, TypeError):
+        return None
+    return value if isinstance(value, (int, float)) and value > 0 else None
+
+
 def forecast_case(case, name):
     if case.get("levels") != LEVELS:
         raise ValueError(f"{name} asks for levels {case.get('levels')}, not {LEVELS}")
     known = case.get("known") or []
     first = next((k for k in known if k.get("hour") == 1), None)
-    if first is not None:
-        p1 = max(1, first["viewers"])
-    else:
+    p1 = _viewers(first) if first is not None else None
+    if p1 is None:
         # Defensive fallback (a case always carries hour 1; producing a
         # valid file beats crashing): last pre-release hourly print, else 1.
         hist = case.get("history_hourly") or []
-        p1 = max(1, hist[-1]["viewers"]) if hist else 1
+        prints = [_viewers(row) for row in hist]
+        prints = [v for v in prints if v is not None]
+        p1 = max(1, prints[-1]) if prints else 1
     centres, sigmas = fit_curve(case.get("comparables"), p1)
     rows = case.get("forecast") or [{"hour": h} for h in range(2, 25)]
     hours = []
     for row in rows:
-        h = row["hour"]
+        h = row.get("hour") if isinstance(row, dict) else None
+        if not isinstance(h, int) or h < 2 or h > 24:
+            continue
         qs = hour_quantiles(p1, centres, sigmas, h)
         hours.append({"hour": h, "q": qs})
     return {"hours": hours}
